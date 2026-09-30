@@ -64,10 +64,11 @@ let y_b = eval_shared(&keys_b, &x_b, &mut channel)?;                  // shares 
   derived from the input mask, so each party could have recovered the other inputs. See
   [vendor/libfss/PATCHES.md](vendor/libfss/PATCHES.md). `tests/security.rs` guards against a
   regression.
-- libfss's own `RingElm` and IC gate only support 32 bits. Here, DCF payloads are Z_{2^128}
-  (`ddcf::Z`, `ddcf::Z2`) and are reduced mod 2^n afterwards. Reduction mod 2^n is a ring
-  homomorphism, so one payload type serves every n. The cost: each correction word stores 16
-  bytes even when n is small.
+- The vendored libfss's `RingElm<BITS>` (and its IC gate) works over Z_{2^BITS} for any
+  compile-time `BITS` in 1..=128 (see PATCHES.md). The gates here take n at runtime, so their
+  DCF payloads are Z_{2^128} (`ddcf::Z`, `ddcf::Z2`) and are reduced mod 2^n afterwards.
+  Reduction mod 2^n is a ring homomorphism, so one payload type serves every n. The cost: each
+  correction word stores 16 bytes even when n is small.
 - Alternatives considered: [`fss-rs`/`dcf`](https://github.com/myl7/fss) (myl7) has a DCF with
   byte-granular input domains. It would work, but it does not fit arbitrary bit widths as well
   as libfss's bit-vector DCF.

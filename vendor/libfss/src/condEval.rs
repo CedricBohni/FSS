@@ -1,5 +1,5 @@
 use crate::prg::{PrgSeed,FixedKeyPrgStream};
-use super::{bits_to_u32_BE,u32_to_bits_BE,RingElm,BinElm,ic::*};
+use super::{RingElm,BinElm,ic::*};
 use crate::Group;
 use serde::Deserialize;
 use serde::Serialize;
@@ -7,19 +7,19 @@ use bincode::*;
 // use serde::de::DeserializeOwned;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct CondEvalKey{
+pub struct CondEvalKey<const BITS: u32 = 32>{
     pub cipher_0: Vec<u8>,
     pub cipher_1: Vec<u8>,
     pub sk_0: Vec<u8>,
     pub sk_1: Vec<u8>,
     pub pi: bool,
-    pub alpha: RingElm,
+    pub alpha: RingElm<BITS>,
 }
 
-impl CondEvalKey
+impl<const BITS: u32> CondEvalKey<BITS>
 {
-    pub fn gen() -> (CondEvalKey, CondEvalKey) {
-        let mut condEvalK0 = CondEvalKey{
+    pub fn gen() -> (Self, Self) {
+        let mut condEvalK0 = Self{
                 cipher_0: Vec::<u8>::new(),
                 cipher_1: Vec::<u8>::new(),
                 sk_0: Vec::<u8>::new(),
@@ -35,9 +35,9 @@ impl CondEvalKey
         let mut stream = FixedKeyPrgStream::new();
         stream.set_key(&root_seed.key);
 
-        let alpha_bits = stream.next_bits(32usize);
-        let (p_bound,q_bound) = (RingElm::zero(), RingElm::from((1<<31)-1));
-        let ( key0,  mut key1) = ICKey::gen(&alpha_bits,&p_bound, &q_bound);
+        let alpha_bits = stream.next_bits(BITS as usize);
+        let (p_bound,q_bound) = (RingElm::zero(), RingElm::new(RingElm::<BITS>::MASK >> 1));
+        let ( key0,  mut key1) = ICKey::<BITS>::gen(&alpha_bits,&p_bound, &q_bound);
         key1.key_idx=false;
 
         
@@ -66,8 +66,8 @@ impl CondEvalKey
         condEvalK0.pi = pi_1;
         condEvalK1.pi = pi_0;
         
-        let mut alphaNumeric = RingElm::from(bits_to_u32_BE(&alpha_bits));
-        let alpha0 = RingElm::from(bits_to_u32_BE(&stream.next_bits(32usize)));
+        let mut alphaNumeric = RingElm::<BITS>::from_bits_BE(&alpha_bits);
+        let alpha0 = RingElm::<BITS>::from_bits_BE(&stream.next_bits(BITS as usize));
 
         condEvalK0.alpha = alpha0.clone();
         alphaNumeric.sub(&condEvalK0.alpha);
@@ -119,7 +119,7 @@ impl CondEvalKey
         (condEvalK0,condEvalK1)
     }
 
-    pub fn eval(&self, x:& RingElm,pointer:bool, sk:& Vec<u8>) -> BinElm {
+    pub fn eval(&self, x:&RingElm<BITS>,pointer:bool, sk:& Vec<u8>) -> BinElm {
         let correctCipher = if pointer{ &self.cipher_1} else {&self.cipher_0};
 
 
@@ -130,7 +130,7 @@ impl CondEvalKey
         match bincode::deserialize(&decrypted[..decrypted.len()-1]){
             Ok(value) => {
                 // m_fssKey = value;
-                let mut m_fssKey:ICKey= value;
+                let mut m_fssKey:ICKey<BITS>= value;
                 let m_idx:u8 = decrypted[decrypted.len()-1];
                 m_fssKey.key_idx = if m_idx==0{ false} else {true};
                 m_fssKey.eval(x)
@@ -142,7 +142,7 @@ impl CondEvalKey
         }
     }
 
-    pub fn eval1(&self, x:& RingElm, pointer_sk:& Vec<u8>) -> BinElm {
+    pub fn eval1(&self, x:&RingElm<BITS>, pointer_sk:& Vec<u8>) -> BinElm {
         let pointer = pointer_sk[0] != 0u8;
         let sk  = pointer_sk[1..].to_vec();
         let correctCipher = if pointer{ &self.cipher_1} else {&self.cipher_0};
@@ -153,7 +153,7 @@ impl CondEvalKey
         match bincode::deserialize(&decrypted[..decrypted.len()-1]){
             Ok(value) => {
                 // m_fssKey = value;
-                let mut m_fssKey:ICKey= value;
+                let mut m_fssKey:ICKey<BITS>= value;
                 let m_idx:u8 = decrypted[decrypted.len()-1];
                 m_fssKey.key_idx = if m_idx==0{ false} else {true};
                 m_fssKey.eval(x)
@@ -173,11 +173,10 @@ mod tests {
     use crate::binary::*;
     use crate::Group;
 
-    #[test]
-    fn evalCheck(){
-        let (mut key0,mut key1) = CondEvalKey::gen();
-        let mut x = RingElm::from((1<<31)+100);
-        // let mut x = RingElm::from(100);
+    fn check<const BITS: u32>() {
+        let (mut key0,mut key1) = CondEvalKey::<BITS>::gen();
+        // Outside [0, 2^(BITS-1) - 1], so the IC gate outputs 0.
+        let mut x = RingElm::<BITS>::new((RingElm::<BITS>::MASK >> 1) + 100);
         x.add(&key0.alpha);
         x.add(&key1.alpha);
 
@@ -197,5 +196,12 @@ mod tests {
         evalResult.add(&key1.eval(&x,pointer1, &concatenate0));
         
         assert_eq!(evalResult, BinElm::zero());
+    }
+
+    #[test]
+    fn evalCheck(){
+        check::<32>();
+        check::<64>();
+        check::<128>();
     }
 }

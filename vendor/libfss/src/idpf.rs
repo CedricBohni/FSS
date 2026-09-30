@@ -207,7 +207,7 @@ mod tests {
         let nbits = 3usize;
         let alpha = crate::u32_to_bits(nbits, 7);
 
-        let values = RingElm::from(1u32).to_vec(nbits);
+        let values = RingElm::<32>::from(1u32).to_vec(nbits);
 
         let (dpf_key0, dpf_key1) = IDPFKey::gen(&alpha, &values);
 

@@ -17,3 +17,19 @@ this copy.
    PRG derives from does. `tests/security.rs` in the parent crate checks that keys no longer
    reveal `alpha`.
 2. `#![allow(warnings)]` at the top of `src/lib.rs` to silence upstream lint noise.
+3. **Generic ring width.** Upstream `RingElm` was hard-wired to Z_{2^32} (a `u32`). It is now
+   `RingElm<const BITS: u32 = 32>`, the ring Z_{2^BITS} for any `1 <= BITS <= 128`, stored in a
+   `u128` and kept reduced. Widths outside that range fail to compile. `RingElm` with no
+   parameter is still the 32-bit ring.
+   - Serde encodes an element as the smallest of `u8`/`u16`/`u32`/`u64`/`u128` that holds
+     `BITS` bits (identical to upstream for `BITS = 32`); deserialization rejects values that
+     do not fit. `to_u8_vec`/`From<Vec<u8>>` use `ceil(BITS/8)` big-endian bytes.
+   - New helpers: `RingElm::{new, max, value, to_u64, to_u128, to_bits_BE, from_bits_BE,
+     from_u8_slice}`, `From<u8|u16|u64|u128|usize>`, and `u128_to_bits_BE`/`bits_to_u128_BE`
+     in `lib.rs`.
+   - `ICKey`, `ICCKey`, `CondEvalKey`, `BeaverTuple` and `QElmMatrix` take the same `BITS`
+     parameter (default 32). The IC gates build their DCF over `BITS` input bits instead of 32,
+     and the Beaver messages are `2 * ceil(BITS/8)` bytes instead of 8.
+   - Upstream tests that relied on the old concrete type now name `RingElm::<32>`; new tests
+     cover the ring, IC/ICC (inside and outside the interval), CondEval and Beaver
+     multiplication at several widths up to 128.

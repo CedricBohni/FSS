@@ -175,6 +175,16 @@ pub fn bits_to_u8_BE(bits: &[bool]) -> u8 {
     out
 }
 
+pub fn u128_to_bits_BE(nbits: usize, input: u128) -> Vec<bool> {
+    assert!(nbits <= 128);
+    (0..nbits).rev().map(|i| (input >> i) & 1 == 1).collect()
+}
+
+pub fn bits_to_u128_BE(bits: &[bool]) -> u128 {
+    assert!(bits.len() <= 128);
+    bits.iter().fold(0u128, |acc, &b| (acc << 1) | b as u128)
+}
+
 pub fn u64_to_bits(input: u64) -> Vec<bool> {
 
     let mut out: Vec<bool> = Vec::new();

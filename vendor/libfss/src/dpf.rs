@@ -166,7 +166,7 @@ mod tests {
         // let mut alpha = vec![true,false];
         let mut alpha = crate::u32_to_bits(3, 7);
 
-        let beta = RingElm::from(117u32);
+        let beta = RingElm::<32>::from(117u32);
         let (dpf_key0, dpf_key1) = DPFKey::gen(&alpha, &beta);
 
         {

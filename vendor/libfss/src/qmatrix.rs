@@ -87,18 +87,18 @@ impl QMatrix {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct QElmMatrix {
+pub struct QElmMatrix<const BITS: u32 = 32> {
     //This structure is defined for the ConvMatrix
-    pub v: Vec<RingElm>,
+    pub v: Vec<RingElm<BITS>>,
     pub n: usize,
 } // The offline data used in every batch.
 
-impl QElmMatrix {
-    pub fn locate(&self, i: usize, j: usize) -> RingElm {
+impl<const BITS: u32> QElmMatrix<BITS> {
+    pub fn locate(&self, i: usize, j: usize) -> RingElm<BITS> {
         self.v[i * self.n + j]
     }
 
-    pub fn Mutlocate(&mut self, i: usize, j: usize) -> &mut RingElm {
+    pub fn Mutlocate(&mut self, i: usize, j: usize) -> &mut RingElm<BITS> {
         &mut self.v[i * self.n + j]
     }
 
@@ -107,8 +107,8 @@ impl QElmMatrix {
         let mut stream = FixedKeyPrgStream::new();
         stream.set_key(&seed.key);
 
-        let mut v0 = Vec::<RingElm>::new();
-        let mut v1 = Vec::<RingElm>::new();
+        let mut v0 = Vec::<RingElm<BITS>>::new();
+        let mut v1 = Vec::<RingElm<BITS>>::new();
 
         for i in 0..(self.n * self.n){
             let (el0, el1) = self.v[i].share();
@@ -121,7 +121,7 @@ impl QElmMatrix {
     }
 
     pub fn convertFromQMatrix(q: QMatrix) -> Self {
-        let mut rv: Vec<RingElm> = Vec::new();
+        let mut rv: Vec<RingElm<BITS>> = Vec::new();
 
         for i in 0..q.n {
             for j in 0..q.n {

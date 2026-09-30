@@ -1,40 +1,35 @@
 use crate::prg::{PrgSeed,FixedKeyPrgStream};
-use super::{bits_to_u32_BE,u32_to_bits_BE,RingElm,BinElm,dcf::*};
+use super::{RingElm,BinElm,dcf::*};
 use crate::Group;
 use std::mem;
 use serde::Deserialize;
 use serde::Serialize;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ICKey{
+pub struct ICKey<const BITS: u32 = 32>{
     pub key_idx: bool,
     dcf_key: DCFKey<BinElm>,
-    p: RingElm,
-    q: RingElm,
+    p: RingElm<BITS>,
+    q: RingElm<BITS>,
     word: BinElm,
 }
 
 //TODO:Convert BinElm to a general type 
-impl ICKey
+impl<const BITS: u32> ICKey<BITS>
 {
-    pub fn gen(alpha_bits: &[bool], p_bound:& RingElm, q_bound:& RingElm) -> (ICKey, ICKey) {
-        let gamma_in = RingElm::from( bits_to_u32_BE(&alpha_bits) );
+    pub fn gen(alpha_bits: &[bool], p_bound:&RingElm<BITS>, q_bound:&RingElm<BITS>) -> (Self, Self) {
+        let gamma_in = RingElm::<BITS>::from_bits_BE(alpha_bits);
 
         let mut gamma = gamma_in.clone();
-        gamma.sub(&RingElm::one());
+        gamma.sub(&RingElm::<BITS>::one());
 
-        let mut gamma_bits = vec![false;32usize];
-        let num_eval = gamma.to_u32();
-        match num_eval {
-            Some(numeric) => gamma_bits = u32_to_bits_BE(32usize,numeric),
-            None      => println!( "u32 Conversion failed!!" ),
-        }
+        let gamma_bits = gamma.to_bits_BE();
 
         let beta = BinElm::from(true);
         let (key0, key1) = DCFKey::gen(&gamma_bits, &beta);
 
         let mut q_prime = q_bound.clone();
-        q_prime.add(&RingElm::one());
+        q_prime.add(&RingElm::<BITS>::one());
         
 
         let mut alpha_p = p_bound.clone();
@@ -44,7 +39,7 @@ impl ICKey
         alpha_q.add(&gamma_in);
 
         let mut alpha_q_prime = alpha_q.clone();
-        alpha_q_prime.add(&RingElm::one());
+        alpha_q_prime.add(&RingElm::<BITS>::one());
 
         let root_seed = PrgSeed::random();
         let mut stream = FixedKeyPrgStream::new();
@@ -61,7 +56,7 @@ impl ICKey
         if alpha_q_prime > q_prime{
             z_1.add(&BinElm::one());
         }
-        if alpha_q == RingElm::from(u32::MAX){
+        if alpha_q == RingElm::<BITS>::max(){
             z_1.add(&BinElm::one());
         }
         z_1.sub(&z_0);
@@ -84,34 +79,24 @@ impl ICKey
         )
     }
 
-    pub fn eval(&self, x:& RingElm) -> BinElm {
+    pub fn eval(&self, x:&RingElm<BITS>) -> BinElm {
         let mut q_prime = self.q.clone();
-        q_prime.add(&RingElm::one());
+        q_prime.add(&RingElm::<BITS>::one());
 
         let mut x_p = x.clone();
-        x_p.add(&RingElm::from(u32::MAX));
+        x_p.add(&RingElm::<BITS>::max());
         x_p.sub(&self.p);
 
         let mut x_q_prime = x.clone();
-        x_q_prime.add(&RingElm::from(u32::MAX));
+        x_q_prime.add(&RingElm::<BITS>::max());
         x_q_prime.sub(&q_prime);
 
         let mut output_word:BinElm = BinElm::zero();
         output_word.add(&self.word);
 
-        let mut x_p_bits = vec![false;32usize];
-        let mut num_eval = x_p.to_u32();
-        match num_eval {
-            Some(numeric) => x_p_bits = u32_to_bits_BE(32usize,numeric),
-            None      => println!( "u32 Conversion failed!!" ),
-        }
+        let x_p_bits = x_p.to_bits_BE();
 
-        let mut x_q_prime_bits = vec![false;32usize];
-        num_eval = x_q_prime.to_u32();
-        match num_eval {
-            Some(numeric) => x_q_prime_bits = u32_to_bits_BE(32usize,numeric),
-            None      => println!( "u32 Conversion failed!!" ),
-        }
+        let x_q_prime_bits = x_q_prime.to_bits_BE();
         let duplicate_dcf = self.dcf_key.clone();
 
         let s_p = self.dcf_key.eval(&x_p_bits);
@@ -145,34 +130,29 @@ impl ICKey
 
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ICCKey{
+pub struct ICCKey<const BITS: u32 = 32>{
     pub key_idx: bool,
-    dcf_key: DCFKey<RingElm>,
-    p: RingElm,
-    q: RingElm,
-    word: RingElm,
+    dcf_key: DCFKey<RingElm<BITS>>,
+    p: RingElm<BITS>,
+    q: RingElm<BITS>,
+    word: RingElm<BITS>,
 }
 
-impl ICCKey
+impl<const BITS: u32> ICCKey<BITS>
 {
-    pub fn gen(alpha_bits: &[bool], p_bound:& RingElm, q_bound:& RingElm) -> (ICCKey, ICCKey) {
-        let gamma_in = RingElm::from( bits_to_u32_BE(&alpha_bits) );
+    pub fn gen(alpha_bits: &[bool], p_bound:&RingElm<BITS>, q_bound:&RingElm<BITS>) -> (Self, Self) {
+        let gamma_in = RingElm::<BITS>::from_bits_BE(alpha_bits);
 
         let mut gamma = gamma_in.clone();
-        gamma.sub(&RingElm::one());
+        gamma.sub(&RingElm::<BITS>::one());
 
-        let mut gamma_bits = vec![false;32usize];
-        let num_eval = gamma.to_u32();
-        match num_eval {
-            Some(numeric) => gamma_bits = u32_to_bits_BE(32usize,numeric),
-            None      => println!( "u32 Conversion failed!!" ),
-        }
+        let gamma_bits = gamma.to_bits_BE();
 
-        let beta = RingElm::one();
+        let beta = RingElm::<BITS>::one();
         let (key0, key1) = DCFKey::gen(&gamma_bits, &beta);
 
         let mut q_prime = q_bound.clone();
-        q_prime.add(&RingElm::one());
+        q_prime.add(&RingElm::<BITS>::one());
         
 
         let mut alpha_p = p_bound.clone();
@@ -182,25 +162,25 @@ impl ICCKey
         alpha_q.add(&gamma_in);
 
         let mut alpha_q_prime = alpha_q.clone();
-        alpha_q_prime.add(&RingElm::one());
+        alpha_q_prime.add(&RingElm::<BITS>::one());
 
         let root_seed = PrgSeed::random();
         let mut stream = FixedKeyPrgStream::new();
         stream.set_key(&root_seed.key);
         let z_0_bits = stream.next_bits(1usize);
-        let z_0 = RingElm::from(bits_to_u32_BE(&z_0_bits));
-        let mut z_1 = RingElm::zero();
+        let z_0 = RingElm::<BITS>::from_bits_BE(&z_0_bits);
+        let mut z_1 = RingElm::<BITS>::zero();
         if alpha_p > alpha_q{
-            z_1.add(&RingElm::one());
+            z_1.add(&RingElm::<BITS>::one());
         }
         if &alpha_p > p_bound{
-            z_1.sub(&RingElm::one());
+            z_1.sub(&RingElm::<BITS>::one());
         }
         if alpha_q_prime > q_prime{
-            z_1.add(&RingElm::one());
+            z_1.add(&RingElm::<BITS>::one());
         }
-        if alpha_q == RingElm::from(u32::MAX){
-            z_1.add(&RingElm::one());
+        if alpha_q == RingElm::<BITS>::max(){
+            z_1.add(&RingElm::<BITS>::one());
         }
         z_1.sub(&z_0);
 
@@ -222,34 +202,24 @@ impl ICCKey
         )
     }
 
-    pub fn eval(&self, x:& RingElm) -> RingElm {
+    pub fn eval(&self, x:&RingElm<BITS>) -> RingElm<BITS> {
         let mut q_prime = self.q.clone();
-        q_prime.add(&RingElm::one());
+        q_prime.add(&RingElm::<BITS>::one());
 
         let mut x_p = x.clone();
-        x_p.add(&RingElm::from(u32::MAX));
+        x_p.add(&RingElm::<BITS>::max());
         x_p.sub(&self.p);
 
         let mut x_q_prime = x.clone();
-        x_q_prime.add(&RingElm::from(u32::MAX));
+        x_q_prime.add(&RingElm::<BITS>::max());
         x_q_prime.sub(&q_prime);
 
-        let mut output_word:RingElm = RingElm::zero();
+        let mut output_word: RingElm<BITS> = RingElm::<BITS>::zero();
         output_word.add(&self.word);
 
-        let mut x_p_bits = vec![false;32usize];
-        let mut num_eval = x_p.to_u32();
-        match num_eval {
-            Some(numeric) => x_p_bits = u32_to_bits_BE(32usize,numeric),
-            None      => println!( "u32 Conversion failed!!" ),
-        }
+        let x_p_bits = x_p.to_bits_BE();
 
-        let mut x_q_prime_bits = vec![false;32usize];
-        num_eval = x_q_prime.to_u32();
-        match num_eval {
-            Some(numeric) => x_q_prime_bits = u32_to_bits_BE(32usize,numeric),
-            None      => println!( "u32 Conversion failed!!" ),
-        }
+        let x_q_prime_bits = x_q_prime.to_bits_BE();
         let duplicate_dcf = self.dcf_key.clone();
 
         let s_p = self.dcf_key.eval(&x_p_bits);
@@ -259,11 +229,11 @@ impl ICCKey
 
         if self.key_idx{
             if x>&self.p{
-                output_word.add(&RingElm::one());
+                output_word.add(&RingElm::<BITS>::one());
             }
 
             if x>&q_prime{
-                output_word.sub(&RingElm::one());
+                output_word.sub(&RingElm::<BITS>::one());
             }
         }
 
@@ -284,64 +254,45 @@ impl ICCKey
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ring::*;
-    use crate::binary::*;
-    use crate::Group;
+
+    // Keys are generated for the input mask alpha; the offset input x = alpha + d must give
+    // 1{p <= d <= q} (as a ring element for ICC, as a bit for IC).
+    fn check<const BITS: u32>() {
+        let seed = PrgSeed::random();
+        let mut stream = FixedKeyPrgStream::new();
+        stream.set_key(&seed.key);
+        let alpha_bits = stream.next_bits(BITS as usize);
+        let alpha = RingElm::<BITS>::from_bits_BE(&alpha_bits);
+
+        let p = RingElm::<BITS>::zero();
+        let q = RingElm::<BITS>::new(RingElm::<BITS>::MASK >> 1);
+        let (icc0, icc1) = ICCKey::gen(&alpha_bits, &p, &q);
+        let (ic0, ic1) = ICKey::gen(&alpha_bits, &p, &q);
+
+        let one = RingElm::<BITS>::one();
+        for d in [p, p + one, q - one, q, q + one, RingElm::<BITS>::max(), RingElm::<BITS>::max() - one] {
+            let x = alpha + d;
+            let inside = p <= d && d <= q;
+
+            let got = icc0.eval(&x) + icc1.eval(&x);
+            let want = if inside { RingElm::<BITS>::one() } else { RingElm::<BITS>::zero() };
+            assert_eq!(got, want, "ICC BITS={} d={:?}", BITS, d);
+
+            let mut bit = ic0.eval(&x);
+            bit.add(&ic1.eval(&x));
+            assert_eq!(bit, BinElm::from(inside), "IC BITS={} d={:?}", BITS, d);
+        }
+    }
 
     #[test]
     fn evalCheck() {
-        let seed = PrgSeed::one();
-        let mut stream = FixedKeyPrgStream::new();
-        stream.set_key(&seed.key);
-        let alpha_bits = stream.next_bits(32usize);
-
-        let p_bound = RingElm::zero();
-        let q_bound = RingElm::from((1<<31)-1);
-        //let q_bound = RingElm::from(4);
-
-        // println!("u32 max is: {:?}",RingElm::from(u32::MAX) );
-        println!("u32 u32_to_bits_BE test: {:?}", u32_to_bits_BE(32usize,4) );
-
-        let (key0, key1) = ICCKey::gen(&alpha_bits,&p_bound, &q_bound);
-
-        {   
-            for i in 1..5{
-                let mut alpha_numeric = RingElm::from(bits_to_u32_BE(&alpha_bits));
-
-                alpha_numeric.sub(&RingElm::from(i));
-                println!("a[{}] {:?}", i, alpha_numeric);
-
-                println!("pass check {}",i);
-
-                let mut evalResult = RingElm::zero();
-
-                let word0 = key0.eval(&alpha_numeric);
-                evalResult.add(&word0);
-
-                let word1 = key1.eval(&alpha_numeric);
-                evalResult.add(&word1);
-
-                assert_eq!(evalResult, RingElm::zero());
-            }
+        for _ in 0..5 {
+            check::<8>();
+            check::<32>();
+            check::<33>();
+            check::<64>();
+            check::<100>();
+            check::<128>();
         }
-
-
-        // {   
-        //     for i in 6..10{
-        //         let mut alpha_numeric = RingElm::from(bits_to_u32_BE(&alpha_bits));
-        //         alpha_numeric.add(&RingElm::from(i));
-
-        //         let mut evalResult = RingElm::zero();
-
-        //         let word0 = key0.eval(&alpha_numeric);
-        //         evalResult.add(&word0);
-
-        //         let word1 = key1.eval(&alpha_numeric);
-        //         evalResult.add(&word1);
-
-        //         assert_eq!(evalResult, RingElm::zero());
-        //     }
-        // }
-
     }
 }

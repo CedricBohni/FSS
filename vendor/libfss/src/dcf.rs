@@ -205,7 +205,7 @@ mod tests {
         // let mut alpha = vec![true];
         let mut alpha = vec![true,false,false];
         // let alpha = crate::u32_to_bits(3, 5);
-        let beta = RingElm::from(117u32);
+        let beta = RingElm::<32>::from(117u32);
         let (key0, key1) = DCFKey::gen(&alpha, &beta);
 
         {   

@@ -1,6 +1,5 @@
 use crate::prg::PrgSeed;
 use crate::prg::FixedKeyPrgStream;
-use crate::bits_to_u32;
 use crate::{ring, Group};
 
 use super::RingElm;
@@ -9,35 +8,34 @@ use super::RingElm;
 use serde::Deserialize;
 use serde::Serialize;
 
-const NUMERIC_LEN:usize = 32;
-
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct BeaverTuple{
-    pub a: RingElm,
-    pub b: RingElm,
-    pub ab: RingElm,
-    pub delta_a: RingElm,
-    pub delta_b: RingElm,
+pub struct BeaverTuple<const BITS: u32 = 32>{
+    pub a: RingElm<BITS>,
+    pub b: RingElm<BITS>,
+    pub ab: RingElm<BITS>,
+    pub delta_a: RingElm<BITS>,
+    pub delta_b: RingElm<BITS>,
 }
 
-impl BeaverTuple{
-    fn new(ra: RingElm, rb: RingElm, rc: RingElm) -> Self{
-        BeaverTuple { a: ra, b: rb, ab: rc, delta_a:RingElm::zero(), delta_b:RingElm::zero(), }
+impl<const BITS: u32> BeaverTuple<BITS>{
+    fn new(ra: RingElm<BITS>, rb: RingElm<BITS>, rc: RingElm<BITS>) -> Self{
+        Self { a: ra, b: rb, ab: rc, delta_a:RingElm::zero(), delta_b:RingElm::zero(), }
     }
 
-    pub fn genBeaver(beavertuples0: &mut Vec<BeaverTuple>, beavertuples1: &mut Vec<BeaverTuple>, seed: &PrgSeed, size:usize) {
+    pub fn genBeaver(beavertuples0: &mut Vec<Self>, beavertuples1: &mut Vec<Self>, seed: &PrgSeed, size:usize) {
         let mut stream = FixedKeyPrgStream::new();
         stream.set_key(&seed.key);
 
         for i in 0..size{
-            let rd_bits = stream.next_bits(NUMERIC_LEN*5);
-            let a0 = RingElm::from( bits_to_u32(&rd_bits[..NUMERIC_LEN]) );
-            let b0 = RingElm::from( bits_to_u32(&rd_bits[NUMERIC_LEN..2*NUMERIC_LEN]) );
+            let n = BITS as usize;
+            let rd_bits = stream.next_bits(n*5);
+            let a0 = RingElm::from_bits_BE(&rd_bits[..n]);
+            let b0 = RingElm::from_bits_BE(&rd_bits[n..2*n]);
 
-            let a1 = RingElm::from( bits_to_u32(&rd_bits[2*NUMERIC_LEN..3*NUMERIC_LEN]) );
-            let b1 = RingElm::from( bits_to_u32(&rd_bits[3*NUMERIC_LEN..4*NUMERIC_LEN]));
+            let a1 = RingElm::from_bits_BE(&rd_bits[2*n..3*n]);
+            let b1 = RingElm::from_bits_BE(&rd_bits[3*n..4*n]);
 
-            let ab0 = RingElm::from( bits_to_u32(&rd_bits[4*NUMERIC_LEN..5*NUMERIC_LEN]) );
+            let ab0 = RingElm::from_bits_BE(&rd_bits[4*n..5*n]);
 
             let mut a = RingElm::zero();
             a.add(&a0);
@@ -53,7 +51,7 @@ impl BeaverTuple{
 
             ab.sub(&ab0);
 
-            let beaver0 = BeaverTuple{
+            let beaver0 = Self{
                 a: a0,
                 b: b0,
                 ab: ab0,
@@ -61,7 +59,7 @@ impl BeaverTuple{
                 delta_b:RingElm::zero(),
             };
 
-            let beaver1 = BeaverTuple{
+            let beaver1 = Self{
                 a: a1,
                 b: b1,
                 ab: ab,
@@ -74,31 +72,22 @@ impl BeaverTuple{
         }
     }
     
-    pub fn beaver_mul0(&mut self, alpha: RingElm, beta: RingElm)-> Vec<u8>{
+    pub fn beaver_mul0(&mut self, alpha: RingElm<BITS>, beta: RingElm<BITS>)-> Vec<u8>{
         self.delta_a = alpha - self.a;
         self.delta_b = beta - self.b;
 
         let mut container  = Vec::<u8>::new();
-        container.append(&mut self.delta_a.to_u32().unwrap().to_be_bytes().to_vec());
-        container.append(&mut self.delta_b.to_u32().unwrap().to_be_bytes().to_vec());
+        container.append(&mut self.delta_a.to_u8_vec());
+        container.append(&mut self.delta_b.to_u8_vec());
         container
     }
 
     /*The multiplication of [alpha] x [beta], the values of beaver_share are [a], [b], and [ab], d and e are the reconstructed values of alpha-a, beta-b*/
-    pub fn beaver_mul1(&mut self, is_server: bool, otherHalf:&Vec<u8> ) -> RingElm{
-        assert_eq!(otherHalf.len(),8usize);
-        for i in 0..2{
-            let mut ybuf: [u8; 4]= [0; 4];
-            for j in 0..4{
-                ybuf[j] = otherHalf[i*4+j];
-            }
-            if i==0{
-                self.delta_a.add(&RingElm::from(u32::from_be_bytes(ybuf)));
-            }
-            else{
-                self.delta_b.add(&RingElm::from(u32::from_be_bytes(ybuf)));
-            }
-        }
+    pub fn beaver_mul1(&mut self, is_server: bool, otherHalf:&Vec<u8> ) -> RingElm<BITS>{
+        let len = RingElm::<BITS>::BYTES;
+        assert_eq!(otherHalf.len(), 2*len);
+        self.delta_a.add(&RingElm::from_u8_slice(&otherHalf[..len]));
+        self.delta_b.add(&RingElm::from_u8_slice(&otherHalf[len..]));
         let mut result= RingElm::zero();
         if is_server{
             result.add(&(self.delta_a*self.delta_b) );
@@ -109,13 +98,13 @@ impl BeaverTuple{
         result
     }
 
-    pub fn mul_open(&mut self, alpha: RingElm, beta: RingElm) -> (RingElm, RingElm){
+    pub fn mul_open(&mut self, alpha: RingElm<BITS>, beta: RingElm<BITS>) -> (RingElm<BITS>, RingElm<BITS>){
         self.delta_a = alpha - self.a;
         self.delta_b = beta - self.b;
         (self.delta_a, self.delta_b)
     }
 
-    pub fn mul_compute(&mut self, is_server: bool, alpha: &RingElm, beta: &RingElm) -> RingElm{
+    pub fn mul_compute(&mut self, is_server: bool, alpha: &RingElm<BITS>, beta: &RingElm<BITS>) -> RingElm<BITS>{
         self.delta_a = alpha.clone();
         self.delta_b = beta.clone();
         let mut result= RingElm::zero();
@@ -133,22 +122,22 @@ impl BeaverTuple{
 
 #[cfg(test)]
 mod test{
-    use crate::{beavertuple::*, RingElm};
+    use crate::{beavertuple::*, RingElm, Share};
 
     #[test]
     fn test_beaver_mul(){
-        let a0 = RingElm::from(3);
-        let a1 = RingElm::from(2);
-        let b0 = RingElm::from(2);
-        let b1 = RingElm::from(6);
-        let c0 = RingElm::from(17);
-        let c1 = RingElm::from(23);
+        let a0 = RingElm::<32>::from(3u32);
+        let a1 = RingElm::<32>::from(2u32);
+        let b0 = RingElm::<32>::from(2u32);
+        let b1 = RingElm::<32>::from(6u32);
+        let c0 = RingElm::<32>::from(17u32);
+        let c1 = RingElm::<32>::from(23u32);
 
-        let alpha0 = RingElm::from(23);
-        let alpha1 = RingElm::from(17);
+        let alpha0 = RingElm::<32>::from(23u32);
+        let alpha1 = RingElm::<32>::from(17u32);
 
-        let beta0 = RingElm::from(14);
-        let beta1 = RingElm::from(16);
+        let beta0 = RingElm::<32>::from(14u32);
+        let beta1 = RingElm::<32>::from(16u32);
         let mut beaver0 = BeaverTuple::new(a0, b0, c0);
         let mut beaver1 = BeaverTuple::new(a1, b1, c1);
 
@@ -171,6 +160,31 @@ mod test{
         let r_real = (alpha0 + alpha1) * (beta0 + beta1);
         assert_eq!(r0 + r1, r_real);
         //assert_eq!(r1, r_real);
+    }
+
+    fn check_wide<const BITS: u32>() {
+        let (mut t0, mut t1) = (Vec::new(), Vec::new());
+        BeaverTuple::<BITS>::genBeaver(&mut t0, &mut t1, &PrgSeed::random(), 4);
+        for (b0, b1) in t0.iter_mut().zip(t1.iter_mut()) {
+            let (x, y) = (RingElm::<BITS>::max(), RingElm::<BITS>::new(0x1234_5678_9abc_def0_1234_5678_9abc_def0));
+            let (x0, x1) = x.share();
+            let (y0, y1) = y.share();
+            let m0 = b0.beaver_mul0(x0, y0);
+            let m1 = b1.beaver_mul0(x1, y1);
+            assert_eq!(m0.len(), 2 * RingElm::<BITS>::BYTES);
+            let r0 = b0.beaver_mul1(false, &m1);
+            let r1 = b1.beaver_mul1(true, &m0);
+            assert_eq!(r0 + r1, x * y, "BITS={}", BITS);
+        }
+    }
+
+    #[test]
+    fn test_beaver_mul_widths(){
+        check_wide::<1>();
+        check_wide::<32>();
+        check_wide::<61>();
+        check_wide::<64>();
+        check_wide::<128>();
     }
 }
 
