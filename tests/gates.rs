@@ -125,16 +125,22 @@ fn online_protocol_local_and_tcp() {
 
 #[test]
 fn keys_roundtrip_through_serialization() {
-    let ring = Ring::new(32).unwrap();
-    let (k0, k1) = deal(GateKind::Ars { shift: 7 }, ring, 3).unwrap();
-    let k0: Vec<PartyKey> = bincode::deserialize(&bincode::serialize(&k0).unwrap()).unwrap();
-    let k1: Vec<PartyKey> = bincode::deserialize(&bincode::serialize(&k1).unwrap()).unwrap();
-    let x = ring.from_signed(-1000);
-    for i in 0..3 {
-        let x_hat = ring.add(x, ring.add(k0[i].r_in_share, k1[i].r_in_share));
-        let y = ring.add(k0[i].gate.eval(x_hat), k1[i].gate.eval(x_hat));
-        let y = ring.sub(y, ring.add(k0[i].r_out_share, k1[i].r_out_share));
-        assert_eq!(ring.to_signed(y), -1000 >> 7);
+    // Serialized keys keep only the low n bits of each payload; results must be unchanged.
+    let mut rng = rand::thread_rng();
+    for n in [1, 2, 7, 8, 9, 31, 32, 33, 64, 100, 127, 128] {
+        let ring = Ring::new(n).unwrap();
+        for kind in [GateKind::Lt0, GateKind::Ars { shift: rng.gen_range(0, n) }] {
+            let (k0, k1) = deal(kind, ring, 20).unwrap();
+            let k0: Vec<PartyKey> = bincode::deserialize(&bincode::serialize(&k0).unwrap()).unwrap();
+            let k1: Vec<PartyKey> = bincode::deserialize(&bincode::serialize(&k1).unwrap()).unwrap();
+            for (a, b) in k0.iter().zip(&k1) {
+                let x = ring.random();
+                let x_hat = ring.add(x, ring.add(a.r_in_share, b.r_in_share));
+                let y = ring.add(a.gate.eval(x_hat), b.gate.eval(x_hat));
+                let y = ring.sub(y, ring.add(a.r_out_share, b.r_out_share));
+                assert_eq!(y, kind.reference(ring, x), "{kind} n={n} x={}", ring.to_signed(x));
+            }
+        }
     }
 }
 

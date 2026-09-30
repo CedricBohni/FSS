@@ -7,21 +7,9 @@ use fss_gates::ddcf::{DdcfKey, Z};
 
 const BITS: u32 = 16;
 
-/// Bincode layout of `DdcfKey<Z>`: domain_bits u32 | Option tag u8 | DCFKey { key_idx u8,
-/// root_seed [u8; 16], cor_words: len u64 + BITS x (seed [u8; 16], bits (u8, u8), word u128),
-/// word u128 } | beta2_share u128.
+/// The right control-correction bit of every level of the key's DCF.
 fn right_cw_bits(key: &DdcfKey<Z>) -> Vec<bool> {
-    let bytes = bincode::serialize(key).unwrap();
-    let cw_start = 4 + 1 + 1 + 16 + 8;
-    let cw_len = 16 + 2 + 16;
-    assert_eq!(bytes.len(), cw_start + BITS as usize * cw_len + 16 + 16, "unexpected key layout");
-    (0..BITS as usize)
-        .map(|i| {
-            let b = bytes[cw_start + i * cw_len + 17];
-            assert!(b <= 1, "unexpected key layout");
-            b == 1
-        })
-        .collect()
+    key.dcf().unwrap().cor_words.iter().map(|cw| cw.bits.1).collect()
 }
 
 #[test]
@@ -29,7 +17,7 @@ fn dcf_keys_do_not_reveal_alpha() {
     let (mut agree, mut total) = (0, 0);
     for _ in 0..300 {
         let alpha: u128 = rand::random::<u16>() as u128;
-        let (k0, _) = DdcfKey::gen(BITS, alpha, Z(1), Z(0));
+        let (k0, _) = DdcfKey::gen(BITS, BITS, alpha, Z(1), Z(0));
         for (i, cw) in right_cw_bits(&k0).into_iter().enumerate() {
             let alpha_bit = (alpha >> (BITS as usize - 1 - i)) & 1 == 1;
             agree += (cw == alpha_bit) as u32;

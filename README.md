@@ -70,9 +70,11 @@ let y_b = eval_shared(&keys_b, &x_b, &mut channel)?;                  // shares 
   regression.
 - The vendored libfss's `RingElm<BITS>` (and its IC gate) works over Z_{2^BITS} for any
   compile-time `BITS` in 1..=128 (see PATCHES.md). The gates here take n at runtime, so their
-  DCF payloads are Z_{2^128} (`ddcf::Z`, `ddcf::Z2`) and are reduced mod 2^n afterwards.
-  Reduction mod 2^n is a ring homomorphism, so one payload type serves every n. The cost: each
-  correction word stores 16 bytes even when n is small.
+  DCF payloads are computed in Z_{2^128} (`ddcf::Z`, `ddcf::Z2`) and reduced mod 2^n. Reduction
+  mod 2^n is a ring homomorphism, so the correction words can be reduced too: a key stores each
+  payload in ceil(n/8) bytes, and one payload type serves every n. What remains is the 16-byte
+  PRG seed per level, which the 128-bit security level needs. For example, an `ars` key with
+  n = 32, s = 12 takes about 1250 bytes per party, down from about 2180.
 - Alternatives considered: [`fss-rs`/`dcf`](https://github.com/myl7/fss) (myl7) has a DCF with
   byte-granular input domains. It would work, but it does not fit arbitrary bit widths as well
   as libfss's bit-vector DCF.

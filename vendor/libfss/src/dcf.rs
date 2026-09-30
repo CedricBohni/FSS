@@ -7,19 +7,20 @@ use std::mem;
 use crate::TupleExt;
 use crate::TupleMapToExt;
 
+// PATCH (fss-gates): fields are public so callers can store keys in their own compact format.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-struct CorWord<T>{
-    seed: prg::PrgSeed,
-    bits: (bool, bool),
-    word: T,
+pub struct CorWord<T>{
+    pub seed: prg::PrgSeed,
+    pub bits: (bool, bool),
+    pub word: T,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DCFKey<T> {
-    key_idx: bool,
-    root_seed: prg::PrgSeed,
-    cor_words: Vec<CorWord<T>>,
-    word: T,
+    pub key_idx: bool,
+    pub root_seed: prg::PrgSeed,
+    pub cor_words: Vec<CorWord<T>>,
+    pub word: T,
 }
 
 impl<T> DCFKey<T>

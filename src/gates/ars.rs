@@ -32,8 +32,8 @@ pub fn gen(ring: Ring, shift: u32, r_in: u128, r_out: u128) -> Result<(ArsKey, A
     let y = ring.neg(r_in);
     let y_msb = bit(y, n - 1) as u128;
     let alpha_n1 = low_bits(y, n - 1);
-    let (s0, s1) = DdcfKey::gen(shift, low_bits(y, shift), Z(1), Z(0));
-    let (d0, d1) = DdcfKey::gen(n - 1, alpha_n1, Z2(1, 1 ^ y_msb), Z2(0, y_msb));
+    let (s0, s1) = DdcfKey::gen(shift, n, low_bits(y, shift), Z(1), Z(0));
+    let (d0, d1) = DdcfKey::gen(n - 1, n, alpha_n1, Z2(1, 1 ^ y_msb), Z2(0, y_msb));
     let (r0, r1) = ring.share(ring.add(r_out, alpha_n1 >> shift));
     Ok((
         ArsKey { party: 0, ring, shift, dcf_s: s0, ddcf_n1: d0, r_share: r0 },
@@ -64,9 +64,8 @@ impl ArsKey {
         let x_msb = bit(x_hat, n - 1) as u128;
         let x_low = low_bits(x_hat, n - 1);
 
-        let t_s = ring.reduce(self.dcf_s.eval(low_mask(s) - low_bits(x_hat, s)).0);
+        let t_s = self.dcf_s.eval(low_mask(s) - low_bits(x_hat, s)).0;
         let Z2(t_n1, m) = self.ddcf_n1.eval(low_mask(n - 1) - x_low);
-        let (t_n1, m) = (ring.reduce(t_n1), ring.reduce(m));
         let msb = ring.sub(ring.add(b * x_msb, m), ring.mul(2 * x_msb, m));
 
         let mut out = ring.add(b * (x_low >> s), self.r_share);

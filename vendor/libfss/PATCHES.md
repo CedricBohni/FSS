@@ -37,3 +37,6 @@ this copy.
    `&mut FixedKeyPrgStream` through `RefCell::as_ptr()` while a `borrow_mut()` of the same cell
    was still live. It now passes the existing borrow (`&mut *s`) to `from_rng`. The output is
    unchanged.
+5. **Public DCF key fields** (`src/dcf.rs`). `DCFKey` and `CorWord` fields are `pub`, so the
+   parent crate can store keys in its own compact format (payloads reduced mod 2^n, stored in
+   `ceil(n/8)` bytes). No behaviour change.

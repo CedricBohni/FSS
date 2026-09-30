@@ -24,7 +24,7 @@ pub fn gen(ring: Ring, r_in: u128, r_out: u128) -> (Lt0Key, Lt0Key) {
     let n = ring.bits();
     let y = ring.neg(r_in);
     let y_msb = bit(y, n - 1) as u128;
-    let (d0, d1) = DdcfKey::gen(n - 1, low_bits(y, n - 1), Z(1 ^ y_msb), Z(y_msb));
+    let (d0, d1) = DdcfKey::gen(n - 1, n, low_bits(y, n - 1), Z(1 ^ y_msb), Z(y_msb));
     let (r0, r1) = ring.share(r_out);
     (
         Lt0Key { party: 0, ring, ddcf: d0, r_share: r0 },
@@ -50,7 +50,7 @@ impl Lt0Key {
         let x_msb = bit(x_hat, n - 1) as u128;
         // z = 2^{n-1} - x_hat[0,n-1) - 1, so that z < alpha  <=>  there is a carry into bit n-1.
         let z = low_mask(n - 1) - low_bits(x_hat, n - 1);
-        let m = ring.reduce(self.ddcf.eval(z).0);
+        let m = self.ddcf.eval(z).0;
         // Shares of x_msb XOR m = x_msb + m - 2 * x_msb * m (x_msb is public).
         let msb = ring.sub(ring.add(b * x_msb, m), ring.mul(2 * x_msb, m));
         ring.add(msb, self.r_share)
