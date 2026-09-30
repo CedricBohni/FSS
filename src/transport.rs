@@ -52,10 +52,18 @@ impl TcpChannel {
         Ok(())
     }
 
-    fn recv(&mut self) -> Result<Vec<u128>, Error> {
+    /// Receive a vector of at most `max_items` values. The length prefix is checked before
+    /// allocating, so a faulty peer cannot make us reserve arbitrary memory.
+    fn recv(&mut self, max_items: usize) -> Result<Vec<u128>, Error> {
         let mut len = [0u8; 8];
         self.stream.read_exact(&mut len)?;
-        let mut bytes = vec![0u8; u64::from_le_bytes(len) as usize];
+        let len = u64::from_le_bytes(len);
+        // bincode Vec<u128>: u64 length + 16 bytes per element.
+        let max_len = 8 + 16 * max_items as u64;
+        if len > max_len {
+            return Err(Error::new(format!("peer announced a {len}-byte message, expected at most {max_len}")));
+        }
+        let mut bytes = vec![0u8; len as usize];
         self.stream.read_exact(&mut bytes)?;
         Ok(bincode::deserialize(&bytes)?)
     }
@@ -66,9 +74,9 @@ impl Channel for TcpChannel {
         // Fixed order, so large messages cannot deadlock on full socket buffers.
         if self.party == 0 {
             self.send(mine)?;
-            self.recv()
+            self.recv(mine.len())
         } else {
-            let theirs = self.recv()?;
+            let theirs = self.recv(mine.len())?;
             self.send(mine)?;
             Ok(theirs)
         }

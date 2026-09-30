@@ -20,9 +20,9 @@ cargo run --release -- check --bits 128 --frac 64 --shift 64 --trials 100 -- -12
 ```
 
 A value is either a decimal, encoded as `round(v · 2^frac)`, or `raw:<int>`, the signed ring
-integer itself. `--shift` defaults to `--frac`. Every trial uses fresh keys and random shares,
-and the result is compared with the plaintext computation. The command exits non-zero if any
-trial fails.
+integer itself. `--shift` defaults to `--frac` (or `--bits` − 1 if they are equal). Every trial
+uses fresh keys and random shares, and the result is compared with the plaintext computation.
+The command exits non-zero if any trial fails.
 
 To keep cases as regression tests, add lines to [tests/my_cases.txt](tests/my_cases.txt)
 (`bits frac shift value`) and run `cargo test --test my_cases`.
@@ -38,6 +38,10 @@ $B party --id 0 --key keys/party0.key --input <shares0> --listen 127.0.0.1:7000 
 # terminal 2
 $B party --id 1 --key keys/party1.key --input <shares1> --connect 127.0.0.1:7000 --reveal --frac 12
 ```
+
+Key files are written readable only by you (mode 0600). They are single-use: `party` deletes
+its key file once the peer has connected, before any share is sent, so a key cannot be
+evaluated on two inputs by accident. Deal fresh keys for every run.
 
 Without `--reveal`, each party prints only its output shares. Use this when a later gate
 consumes the output.

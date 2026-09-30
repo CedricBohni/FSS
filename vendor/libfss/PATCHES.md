@@ -33,3 +33,7 @@ this copy.
    - Upstream tests that relied on the old concrete type now name `RingElm::<32>`; new tests
      cover the ring, IC/ICC (inside and outside the interval), CondEval and Beaver
      multiplication at several widths up to 128.
+4. **Undefined behaviour in `PrgSeed::convert`** (`src/prg.rs`). Upstream created a second
+   `&mut FixedKeyPrgStream` through `RefCell::as_ptr()` while a `borrow_mut()` of the same cell
+   was still live. It now passes the existing borrow (`&mut *s`) to `from_rng`. The output is
+   unchanged.

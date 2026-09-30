@@ -136,3 +136,19 @@ fn keys_roundtrip_through_serialization() {
         assert_eq!(ring.to_signed(y), -1000 >> 7);
     }
 }
+
+#[test]
+fn tcp_rejects_oversized_message() {
+    use std::io::Write;
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let t = std::thread::spawn(move || {
+        let (mut peer, _) = listener.accept().unwrap();
+        // Announce a huge message; a correct receiver must refuse before allocating it.
+        peer.write_all(&u64::MAX.to_le_bytes()).unwrap();
+    });
+    let mut c1 = TcpChannel::connect(addr, Duration::from_secs(10)).unwrap();
+    let err = c1.exchange(&[1, 2, 3]).unwrap_err();
+    assert!(err.to_string().contains("expected at most 56"), "{err}");
+    t.join().unwrap();
+}

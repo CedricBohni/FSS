@@ -181,10 +181,9 @@ impl PrgSeed {
             let mut s = s_in.borrow_mut();
             s.set_key(&self.key);
             s.fill_bytes(&mut out.seed.key);
-            unsafe {
-                let sp = s_in.as_ptr();
-                out.word.from_rng(&mut *sp);
-            }
+            // PATCH (fss-gates): use the existing borrow. Upstream made a second `&mut` to the
+            // stream through `as_ptr()` while `s` was live, which is undefined behaviour.
+            out.word.from_rng(&mut *s);
         });
 
         out

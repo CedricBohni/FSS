@@ -4,7 +4,8 @@ use fss_gates::online::{eval_shared, reveal};
 use fss_gates::transport::TcpChannel;
 use fss_gates::{deal, simulate, Error, FixedPoint, GateKind, PartyKey, Ring};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::io::Write;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 const USAGE: &str = "\
@@ -13,16 +14,18 @@ fss-gates: 2PC FSS gates (less-than-zero, arithmetic right shift) over Z_{2^n}
 Check gates on your own numbers (local simulation, fresh keys every trial):
   fss-gates check --bits N --frac F [--shift S] [--trials T] VALUE...
       VALUE is a decimal (e.g. -3.25, encoded as round(v * 2^F)) or raw:<signed int>.
-      --shift defaults to F. --trials defaults to 20.
+      --shift defaults to F (N-1 when F = N). --trials defaults to 20.
 
 Distributed run in separate terminals (dealer, then party 0 and party 1):
   fss-gates deal  --gate lt0|ars --bits N [--shift S] [--count K] --out DIR
-      Writes DIR/party0.key and DIR/party1.key (K gate instances each, default 1).
+      Writes DIR/party0.key and DIR/party1.key (K gate instances each, default 1),
+      readable only by the current user.
   fss-gates share --bits N --frac F VALUE...
       Input owner: split values into additive shares, one comma list per party.
   fss-gates party --id 0 --key DIR/party0.key --input SHARES --listen ADDR [--reveal] [--frac F]
   fss-gates party --id 1 --key DIR/party1.key --input SHARES --connect ADDR [--reveal] [--frac F]
-      Runs the online phase and prints this party's output shares. With --reveal both
+      Runs the online phase and prints this party's output shares. Keys are single-use:
+      the key file is deleted once the peer is connected, before any share is sent. With --reveal both
       parties exchange shares and print the plaintext outputs (as fixed-point with F).
 ";
 
@@ -111,7 +114,8 @@ fn parse_u32(name: &str, v: &str) -> Result<u32, Error> {
 fn cmd_check(o: &Opts) -> Result<bool, Error> {
     let ring = o.ring()?;
     let fp = FixedPoint::new(ring, o.num("frac")?)?;
-    let shift = o.opt_num("shift")?.unwrap_or(fp.frac());
+    // ars needs shift < n, so with frac = n the default falls back to n - 1.
+    let shift = o.opt_num("shift")?.unwrap_or(fp.frac().min(ring.bits() - 1));
     let trials = o.opt_num("trials")?.unwrap_or(20);
     if o.values.is_empty() {
         return Err(Error::new("give at least one VALUE"));
@@ -163,7 +167,7 @@ fn cmd_deal(o: &Opts) -> Result<bool, Error> {
     std::fs::create_dir_all(&dir)?;
     for (id, keys) in [(0, &k0), (1, &k1)] {
         let path = dir.join(format!("party{id}.key"));
-        std::fs::write(&path, bincode::serialize(keys)?)?;
+        write_private(&path, &bincode::serialize(keys)?)?;
         println!("wrote {} ({count} x {kind} on Z_2^{}, {} bytes)", path.display(), ring.bits(), std::fs::metadata(&path)?.len());
     }
     Ok(true)
@@ -182,7 +186,14 @@ fn cmd_share(o: &Opts) -> Result<bool, Error> {
 
 fn cmd_party(o: &Opts) -> Result<bool, Error> {
     let id = o.num("id")?;
-    let keys: Vec<PartyKey> = bincode::deserialize(&std::fs::read(o.str("key")?)?)?;
+    let key_path = o.str("key")?;
+    let key_bytes = std::fs::read(key_path).map_err(|e| match e.kind() {
+        std::io::ErrorKind::NotFound => Error::new(format!(
+            "key file {key_path} not found (key files are deleted after use; deal fresh keys)"
+        )),
+        _ => e.into(),
+    })?;
+    let keys: Vec<PartyKey> = bincode::deserialize(&key_bytes)?;
     let first = keys.first().ok_or_else(|| Error::new("key file holds no gate instances"))?;
     if first.gate.party() as u32 != id {
         return Err(Error::new(format!("key file is for party {}, not {id}", first.gate.party())));
@@ -209,6 +220,9 @@ fn cmd_party(o: &Opts) -> Result<bool, Error> {
         }
         _ => return Err(Error::new("party 0 needs --listen ADDR, party 1 needs --connect ADDR")),
     };
+    // Consume the keys before anything leaves this party: evaluating the same key on two
+    // inputs leaks their difference, and once a masked share is sent the key counts as used.
+    std::fs::remove_file(key_path).map_err(|e| Error::new(format!("cannot delete used key file {key_path}: {e}")))?;
     let shares = eval_shared(&keys, &inputs, &mut ch)?;
     println!("party {id}: {} output share(s): {}", shares.len(), shares.iter().map(u128::to_string).collect::<Vec<_>>().join(","));
     if o.has("reveal") {
@@ -224,4 +238,25 @@ fn cmd_party(o: &Opts) -> Result<bool, Error> {
         }
     }
     Ok(true)
+}
+
+/// Write a secret file that only the current user can read (mode 0600 on Unix).
+fn write_private(path: &Path, bytes: &[u8]) -> Result<(), Error> {
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        opts.mode(0o600);
+        let file = opts.open(path)?;
+        // `mode` only applies to newly created files; tighten an existing one too.
+        file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+        (&file).write_all(bytes)?;
+        return Ok(());
+    }
+    #[allow(unreachable_code)]
+    {
+        opts.open(path)?.write_all(bytes)?;
+        Ok(())
+    }
 }
