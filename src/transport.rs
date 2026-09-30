@@ -20,7 +20,11 @@ pub struct TcpChannel {
 impl TcpChannel {
     /// Party 0 waits for party 1 to connect.
     pub fn listen(addr: impl ToSocketAddrs) -> Result<TcpChannel, Error> {
-        let listener = TcpListener::bind(addr)?;
+        TcpChannel::accept(&TcpListener::bind(addr)?)
+    }
+
+    /// Party 0 on an already bound listener (e.g. port 0, to let the OS pick a free port).
+    pub fn accept(listener: &TcpListener) -> Result<TcpChannel, Error> {
         let (stream, _) = listener.accept()?;
         stream.set_nodelay(true)?;
         Ok(TcpChannel { stream, party: 0 })

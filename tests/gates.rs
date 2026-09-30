@@ -94,10 +94,11 @@ fn run_parties<C: Channel + Send + 'static>(kind: GateKind, ring: Ring, xs: &[u1
 }
 
 fn tcp_pair() -> (TcpChannel, TcpChannel) {
-    let addr = format!("127.0.0.1:{}", 20000 + rand::thread_rng().gen_range(0, 20000));
-    let a1 = addr.clone();
-    let t = std::thread::spawn(move || TcpChannel::connect(a1.as_str(), Duration::from_secs(10)).unwrap());
-    let c0 = TcpChannel::listen(addr.as_str()).unwrap();
+    // Port 0: the OS picks a free port, so parallel tests and other programs cannot collide.
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let t = std::thread::spawn(move || TcpChannel::connect(addr, Duration::from_secs(10)).unwrap());
+    let c0 = TcpChannel::accept(&listener).unwrap();
     (c0, t.join().unwrap())
 }
 
