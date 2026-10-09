@@ -2,6 +2,9 @@
 
 use fss_gates::{simulate, FixedPoint, GateKind, Ring};
 
+mod common;
+use common::bigint_reference;
+
 const TRIALS: usize = 10;
 
 #[test]
@@ -26,7 +29,8 @@ fn my_cases() {
         let x = fp.parse(value).unwrap_or_else(|e| panic!("{at}: {e}"));
 
         for kind in [GateKind::Lt0, GateKind::Ars { shift: num(shift) }] {
-            let want = kind.reference(ring, x);
+            let want = bigint_reference(kind, ring.bits(), x);
+            assert_eq!(kind.reference(ring, x), want, "{at}: GateKind::reference disagrees with BigInt");
             for _ in 0..TRIALS {
                 let got = simulate(kind, ring, x).unwrap_or_else(|e| panic!("{at}: {e}"));
                 count += 1;

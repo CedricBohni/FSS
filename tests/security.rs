@@ -4,6 +4,7 @@
 //! DCF key. With the fix, those bits must be uncorrelated with alpha.
 
 use fss_gates::ddcf::{DdcfKey, Z};
+use fss_gates::U256;
 
 const BITS: u32 = 16;
 
@@ -16,8 +17,8 @@ fn right_cw_bits(key: &DdcfKey<Z>) -> Vec<bool> {
 fn dcf_keys_do_not_reveal_alpha() {
     let (mut agree, mut total) = (0, 0);
     for _ in 0..300 {
-        let alpha: u128 = rand::random::<u16>() as u128;
-        let (k0, _) = DdcfKey::gen(BITS, BITS, alpha, Z(1), Z(0));
+        let alpha = rand::random::<u16>();
+        let (k0, _) = DdcfKey::gen(BITS, BITS, U256::from(alpha), Z(U256::ONE), Z(U256::ZERO));
         for (i, cw) in right_cw_bits(&k0).into_iter().enumerate() {
             let alpha_bit = (alpha >> (BITS as usize - 1 - i)) & 1 == 1;
             agree += (cw == alpha_bit) as u32;

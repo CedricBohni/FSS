@@ -10,30 +10,30 @@
 //! Key: one DCF_s key, one DDCF_{n-1} key, one ring element. Online: two DCF evaluations.
 
 use crate::ddcf::{DdcfKey, Z, Z2};
-use crate::ring::{bit, low_bits, low_mask, Ring};
+use crate::ring::{bit, low_bits, low_mask, Ring, U256};
 use crate::Error;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug)]
 pub struct ArsKey {
     party: u8,
     ring: Ring,
     shift: u32,
     dcf_s: DdcfKey<Z>,
     ddcf_n1: DdcfKey<Z2>,
-    r_share: u128,
+    r_share: U256,
 }
 
-pub fn gen(ring: Ring, shift: u32, r_in: u128, r_out: u128) -> Result<(ArsKey, ArsKey), Error> {
+pub fn gen(ring: Ring, shift: u32, r_in: U256, r_out: U256) -> Result<(ArsKey, ArsKey), Error> {
     let n = ring.bits();
     if shift >= n {
         return Err(Error::new(format!("shift must be in 0..{n} for a {n}-bit ring, got {shift}")));
     }
     let y = ring.neg(r_in);
-    let y_msb = bit(y, n - 1) as u128;
+    let y_msb = U256::from(bit(y, n - 1));
     let alpha_n1 = low_bits(y, n - 1);
-    let (s0, s1) = DdcfKey::gen(shift, n, low_bits(y, shift), Z(1), Z(0));
-    let (d0, d1) = DdcfKey::gen(n - 1, n, alpha_n1, Z2(1, 1 ^ y_msb), Z2(0, y_msb));
+    let (s0, s1) = DdcfKey::gen(shift, n, low_bits(y, shift), Z(U256::ONE), Z(U256::ZERO));
+    let (d0, d1) = DdcfKey::gen(n - 1, n, alpha_n1, Z2(U256::ONE, y_msb ^ 1), Z2(U256::ZERO, y_msb));
     let (r0, r1) = ring.share(ring.add(r_out, alpha_n1 >> shift));
     Ok((
         ArsKey { party: 0, ring, shift, dcf_s: s0, ddcf_n1: d0, r_share: r0 },
@@ -55,22 +55,59 @@ impl ArsKey {
     }
 
     /// This party's share of `((x_hat - r_in) >>_A s) + r_out`.
-    pub fn eval(&self, x_hat: u128) -> u128 {
+    pub fn eval(&self, x_hat: U256) -> U256 {
         let ring = self.ring;
         let n = ring.bits();
         let s = self.shift;
-        let b = self.party as u128;
+        let b = U256::from(self.party);
         let x_hat = ring.reduce(x_hat);
-        let x_msb = bit(x_hat, n - 1) as u128;
+        let x_msb = U256::from(bit(x_hat, n - 1));
         let x_low = low_bits(x_hat, n - 1);
 
         let t_s = self.dcf_s.eval(low_mask(s) - low_bits(x_hat, s)).0;
         let Z2(t_n1, m) = self.ddcf_n1.eval(low_mask(n - 1) - x_low);
-        let msb = ring.sub(ring.add(b * x_msb, m), ring.mul(2 * x_msb, m));
+        let msb = ring.sub(ring.add(b * x_msb, m), ring.mul(x_msb << 1, m));
 
         let mut out = ring.add(b * (x_low >> s), self.r_share);
         out = ring.add(out, t_s);
-        let scale = 1u128 << (n - s - 1);
+        let scale = U256::ONE << (n - s - 1);
         ring.sub(out, ring.mul(scale, ring.add(t_n1, msb)))
+    }
+}
+
+/// Serialized form: the ring element in `ceil(n/8)` bytes.
+#[derive(Serialize, Deserialize)]
+struct Wire<S, D> {
+    party: u8,
+    ring: Ring,
+    shift: u32,
+    dcf_s: S,
+    ddcf_n1: D,
+    r_share: Vec<u8>,
+}
+
+impl Serialize for ArsKey {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        Wire {
+            party: self.party,
+            ring: self.ring,
+            shift: self.shift,
+            dcf_s: &self.dcf_s,
+            ddcf_n1: &self.ddcf_n1,
+            r_share: self.ring.to_bytes(self.r_share),
+        }
+        .serialize(s)
+    }
+}
+
+impl<'de> Deserialize<'de> for ArsKey {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        use serde::de::Error;
+        let w = Wire::<DdcfKey<Z>, DdcfKey<Z2>>::deserialize(d)?;
+        if w.shift >= w.ring.bits() {
+            return Err(D::Error::custom(format!("ars key: shift {} out of range for a {}-bit ring", w.shift, w.ring.bits())));
+        }
+        let r_share = w.ring.from_bytes(&w.r_share).map_err(D::Error::custom)?;
+        Ok(ArsKey { party: w.party, ring: w.ring, shift: w.shift, dcf_s: w.dcf_s, ddcf_n1: w.ddcf_n1, r_share })
     }
 }

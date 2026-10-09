@@ -2,7 +2,7 @@
 //! Boyle, Chandran, Gilboa, Gupta, Ishai, Kumar, Rathee: "Function Secret Sharing for
 //! Mixed-Mode and Fixed-Point Secure Computation", Eurocrypt 2021.
 //!
-//! Gates, over Z_{2^n} for any 1 <= n <= 128 on signed (two's complement) values:
+//! Gates, over Z_{2^n} for any 1 <= n <= 256 on signed (two's complement) values:
 //! - [`gates::lt0`]: `1{x < 0}` (Fig. 8 specialised to comparison with 0),
 //! - [`gates::ars`]: arithmetic right shift by a public `s` (Fig. 7).
 //!
@@ -21,7 +21,7 @@ pub mod transport;
 
 pub use fixed::FixedPoint;
 pub use gates::{deal, GateKind, PartyKey};
-pub use ring::Ring;
+pub use ring::{Ring, I256, U256};
 
 #[derive(Debug)]
 pub struct Error(String);
@@ -54,7 +54,7 @@ impl From<bincode::Error> for Error {
 
 /// Run one gate on the ring element `x` with fresh keys: the dealer deals, `x` is split into
 /// random additive shares, both parties run the online phase, and the output is reconstructed.
-pub fn simulate(kind: GateKind, ring: Ring, x: u128) -> Result<u128, Error> {
+pub fn simulate(kind: GateKind, ring: Ring, x: U256) -> Result<U256, Error> {
     let (k0, k1) = deal(kind, ring, 1)?;
     let (k0, k1) = (&k0[0], &k1[0]);
     let (x0, x1) = ring.share(x);

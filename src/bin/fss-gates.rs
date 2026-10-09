@@ -2,7 +2,7 @@
 
 use fss_gates::online::{eval_shared, reveal};
 use fss_gates::transport::TcpChannel;
-use fss_gates::{deal, simulate, Error, FixedPoint, GateKind, PartyKey, Ring};
+use fss_gates::{deal, simulate, Error, FixedPoint, GateKind, PartyKey, Ring, U256};
 use std::collections::HashMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -20,10 +20,11 @@ Distributed run in separate terminals (dealer, then party 0 and party 1):
   fss-gates deal  --gate lt0|ars --bits N [--shift S] [--count K] --out DIR
       Writes DIR/party0.key and DIR/party1.key (K gate instances each, default 1),
       readable only by the current user.
-  fss-gates share --bits N --frac F VALUE...
+  fss-gates share --bits N --frac F [--out DIR] VALUE...
       Input owner: split values into additive shares, one comma list per party.
-  fss-gates party --id 0 --key DIR/party0.key --input SHARES --listen ADDR [--reveal] [--frac F]
-  fss-gates party --id 1 --key DIR/party1.key --input SHARES --connect ADDR [--reveal] [--frac F]
+      With --out, writes them to DIR/party0.shares and DIR/party1.shares instead of printing.
+  fss-gates party --id 0 --key DIR/party0.key (--input SHARES | --input-file FILE) --listen ADDR [--reveal] [--frac F]
+  fss-gates party --id 1 --key DIR/party1.key (--input SHARES | --input-file FILE) --connect ADDR [--reveal] [--frac F]
       Runs the online phase and prints this party's output shares. Keys are single-use:
       the key file is deleted once the peer is connected, before any share is sent. With --reveal both
       parties exchange shares and print the plaintext outputs (as fixed-point with F).
@@ -123,7 +124,7 @@ fn cmd_check(o: &Opts) -> Result<bool, Error> {
     let xs = o.values.iter().map(|v| fp.parse(v)).collect::<Result<Vec<_>, _>>()?;
     let kinds = [GateKind::Lt0, GateKind::Ars { shift }];
     // Validate the shift before printing anything.
-    fss_gates::gates::GateKey::gen(kinds[1], ring, 0, 0)?;
+    fss_gates::gates::GateKey::gen(kinds[1], ring, U256::ZERO, U256::ZERO)?;
 
     println!("ring Z_2^{}, {} fractional bits, shift {shift}, {trials} trials per gate\n", ring.bits(), fp.frac());
     let mut all_ok = true;
@@ -141,7 +142,7 @@ fn cmd_check(o: &Opts) -> Result<bool, Error> {
                 }
             }
             all_ok &= failed == 0;
-            let show = |y: u128| match kind {
+            let show = |y: U256| match kind {
                 GateKind::Ars { .. } => format!("{} (raw {})", fp.format(y), ring.to_signed(y)),
                 _ => ring.to_signed(y).to_string(),
             };
@@ -177,10 +178,24 @@ fn cmd_share(o: &Opts) -> Result<bool, Error> {
     let ring = o.ring()?;
     let fp = FixedPoint::new(ring, o.num("frac")?)?;
     let xs = o.values.iter().map(|v| fp.parse(v)).collect::<Result<Vec<_>, _>>()?;
-    let (s0, s1): (Vec<u128>, Vec<u128>) = xs.iter().map(|&x| ring.share(x)).unzip();
-    let join = |v: &[u128]| v.iter().map(u128::to_string).collect::<Vec<_>>().join(",");
-    println!("party 0 --input {}", join(&s0));
-    println!("party 1 --input {}", join(&s1));
+    let (s0, s1): (Vec<U256>, Vec<U256>) = xs.iter().map(|&x| ring.share(x)).unzip();
+    let join = |v: &[U256]| v.iter().map(U256::to_string).collect::<Vec<_>>().join(",");
+    match o.opt_str("out") {
+        Some(dir) => {
+            let dir = PathBuf::from(dir);
+            std::fs::create_dir_all(&dir)?;
+            for (id, shares) in [(0, &s0), (1, &s1)] {
+                let path = dir.join(format!("party{id}.shares"));
+                let text = format!("{SHARES_HEADER} bits={} party={id}\n{}\n", ring.bits(), join(shares));
+                write_private(&path, text.as_bytes())?;
+                println!("wrote {} ({} share(s))", path.display(), shares.len());
+            }
+        }
+        None => {
+            println!("party 0 --input {}", join(&s0));
+            println!("party 1 --input {}", join(&s1));
+        }
+    }
     Ok(true)
 }
 
@@ -199,12 +214,23 @@ fn cmd_party(o: &Opts) -> Result<bool, Error> {
         return Err(Error::new(format!("key file is for party {}, not {id}", first.gate.party())));
     }
     let ring = first.gate.ring();
-    let inputs = o
-        .str("input")?
+    let input = match (o.opt_str("input"), o.opt_str("input-file")) {
+        (Some(list), None) => list.to_string(),
+        (None, Some(path)) => {
+            let text = std::fs::read_to_string(path).map_err(|e| Error::new(format!("cannot read {path}: {e}")))?;
+            read_shares_file(&text, ring, id).map_err(|e| Error::new(format!("{path}: {e}")))?
+        }
+        _ => return Err(Error::new("give exactly one of --input SHARES and --input-file FILE")),
+    };
+    let inputs = input
+        .trim()
         .split(',')
-        .map(|s| s.trim().parse::<u128>().map(|v| ring.reduce(v)))
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| Error::new("--input must be a comma-separated list of unsigned ring elements"))?;
+        .map(|s| match s.trim().parse::<U256>() {
+            Ok(v) if v <= ring.mask() => Ok(v),
+            Ok(_) => Err(Error::new(format!("input share {} does not fit the {}-bit ring of the keys", s.trim(), ring.bits()))),
+            Err(_) => Err(Error::new("the input shares must be a comma-separated list of unsigned ring elements")),
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     if inputs.len() != keys.len() {
         return Err(Error::new(format!("key file holds {} gate instances but --input has {} shares", keys.len(), inputs.len())));
     }
@@ -224,7 +250,7 @@ fn cmd_party(o: &Opts) -> Result<bool, Error> {
     // inputs leaks their difference, and once a masked share is sent the key counts as used.
     std::fs::remove_file(key_path).map_err(|e| Error::new(format!("cannot delete used key file {key_path}: {e}")))?;
     let shares = eval_shared(&keys, &inputs, &mut ch)?;
-    println!("party {id}: {} output share(s): {}", shares.len(), shares.iter().map(u128::to_string).collect::<Vec<_>>().join(","));
+    println!("party {id}: {} output share(s): {}", shares.len(), shares.iter().map(U256::to_string).collect::<Vec<_>>().join(","));
     if o.has("reveal") {
         let frac = o.opt_num("frac")?.unwrap_or(0);
         let fp = FixedPoint::new(ring, frac)?;
@@ -238,6 +264,22 @@ fn cmd_party(o: &Opts) -> Result<bool, Error> {
         }
     }
     Ok(true)
+}
+
+const SHARES_HEADER: &str = "# fss-gates shares";
+
+/// The share list from a file written by `share --out`, after checking that its header matches
+/// the ring and party of the keys.
+fn read_shares_file(text: &str, ring: Ring, id: u32) -> Result<String, Error> {
+    let (header, list) = text.split_once('\n').unwrap_or((text, ""));
+    let fields = header
+        .strip_prefix(SHARES_HEADER)
+        .ok_or_else(|| Error::new(format!("not a shares file (expected a `{SHARES_HEADER}` header line)")))?;
+    let want = format!(" bits={} party={id}", ring.bits());
+    if fields.trim_end() != want {
+        return Err(Error::new(format!("written for{}, but the key is for{want}", fields.trim_end())));
+    }
+    Ok(list.to_string())
 }
 
 /// Write a secret file that only the current user can read (mode 0600 on Unix).

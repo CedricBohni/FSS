@@ -11,9 +11,9 @@
 pub mod ars;
 pub mod lt0;
 
-use crate::ring::Ring;
+use crate::ring::{Ring, U256};
 use crate::Error;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum GateKind {
@@ -34,9 +34,9 @@ impl GateKind {
     }
 
     /// Plaintext reference: what the gate computes on the ring element `x`.
-    pub fn reference(&self, ring: Ring, x: u128) -> u128 {
+    pub fn reference(&self, ring: Ring, x: U256) -> U256 {
         match self {
-            GateKind::Lt0 => ring.msb(x) as u128,
+            GateKind::Lt0 => U256::from(ring.msb(x)),
             GateKind::Ars { shift } => ring.from_signed(ring.to_signed(x) >> shift),
         }
     }
@@ -58,7 +58,7 @@ pub enum GateKey {
 }
 
 impl GateKey {
-    pub fn gen(kind: GateKind, ring: Ring, r_in: u128, r_out: u128) -> Result<(GateKey, GateKey), Error> {
+    pub fn gen(kind: GateKind, ring: Ring, r_in: U256, r_out: U256) -> Result<(GateKey, GateKey), Error> {
         Ok(match kind {
             GateKind::Lt0 => {
                 let (k0, k1) = lt0::gen(ring, r_in, r_out);
@@ -72,7 +72,7 @@ impl GateKey {
     }
 
     /// This party's share of `g(x_hat - r_in) + r_out`.
-    pub fn eval(&self, x_hat: u128) -> u128 {
+    pub fn eval(&self, x_hat: U256) -> U256 {
         match self {
             GateKey::Lt0(k) => k.eval(x_hat),
             GateKey::Ars(k) => k.eval(x_hat),
@@ -102,11 +102,47 @@ impl GateKey {
 }
 
 /// Everything one party needs from the dealer for one gate instance.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug)]
 pub struct PartyKey {
     pub gate: GateKey,
-    pub r_in_share: u128,
-    pub r_out_share: u128,
+    pub r_in_share: U256,
+    pub r_out_share: U256,
+    /// Public, random identifier of this gate instance, the same in both parties' keys. The
+    /// online phase compares the IDs to catch keys from different deals or in a different order.
+    pub id: u128,
+}
+
+/// Serialized form of a [`PartyKey`]: the mask shares in `ceil(n/8)` bytes each.
+#[derive(Serialize, Deserialize)]
+struct PartyWire<G> {
+    gate: G,
+    r_in_share: Vec<u8>,
+    r_out_share: Vec<u8>,
+    id: u128,
+}
+
+impl Serialize for PartyKey {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        let ring = self.gate.ring();
+        PartyWire {
+            gate: &self.gate,
+            r_in_share: ring.to_bytes(self.r_in_share),
+            r_out_share: ring.to_bytes(self.r_out_share),
+            id: self.id,
+        }
+        .serialize(s)
+    }
+}
+
+impl<'de> Deserialize<'de> for PartyKey {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        use serde::de::Error;
+        let w = PartyWire::<GateKey>::deserialize(d)?;
+        let ring = w.gate.ring();
+        let r_in_share = ring.from_bytes(&w.r_in_share).map_err(D::Error::custom)?;
+        let r_out_share = ring.from_bytes(&w.r_out_share).map_err(D::Error::custom)?;
+        Ok(PartyKey { gate: w.gate, r_in_share, r_out_share, id: w.id })
+    }
 }
 
 /// The dealer: fresh masks and keys for `count` independent gate instances.
@@ -114,13 +150,15 @@ pub struct PartyKey {
 pub fn deal(kind: GateKind, ring: Ring, count: usize) -> Result<(Vec<PartyKey>, Vec<PartyKey>), Error> {
     let mut keys0 = Vec::with_capacity(count);
     let mut keys1 = Vec::with_capacity(count);
-    for _ in 0..count {
+    let first_id: u128 = rand::random();
+    for i in 0..count {
+        let id = first_id.wrapping_add(i as u128);
         let (r_in, r_out) = (ring.random(), ring.random());
         let (g0, g1) = GateKey::gen(kind, ring, r_in, r_out)?;
         let (i0, i1) = ring.share(r_in);
         let (o0, o1) = ring.share(r_out);
-        keys0.push(PartyKey { gate: g0, r_in_share: i0, r_out_share: o0 });
-        keys1.push(PartyKey { gate: g1, r_in_share: i1, r_out_share: o1 });
+        keys0.push(PartyKey { gate: g0, r_in_share: i0, r_out_share: o0, id });
+        keys1.push(PartyKey { gate: g1, r_in_share: i1, r_out_share: o1, id });
     }
     Ok((keys0, keys1))
 }

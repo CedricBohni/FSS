@@ -1,8 +1,8 @@
 //! Signed fixed-point encoding: a real `v` is stored as `round(v * 2^frac)` in two's complement
 //! in Z_{2^n}. Parsing and printing are exact decimal conversions, so they work for all widths
-//! up to 128 bits.
+//! up to 256 bits.
 
-use crate::ring::Ring;
+use crate::ring::{Ring, I256, U256};
 use crate::Error;
 use num_bigint::BigInt;
 use serde::{Deserialize, Serialize};
@@ -32,7 +32,7 @@ impl FixedPoint {
     /// Parse an input value. Accepts a plain decimal such as `-3.25` (no exponent notation),
     /// which is scaled by `2^frac` and rounded to nearest (ties away from zero), or `raw:<int>`,
     /// which is taken as the signed ring integer itself.
-    pub fn parse(&self, s: &str) -> Result<u128, Error> {
+    pub fn parse(&self, s: &str) -> Result<U256, Error> {
         let s = s.trim();
         let scaled = match s.strip_prefix("raw:") {
             Some(raw) => raw
@@ -41,13 +41,13 @@ impl FixedPoint {
             None => self.scale_decimal(s)?,
         };
         let (lo, hi) = self.ring.signed_range();
-        if scaled < BigInt::from(lo) || scaled > BigInt::from(hi) {
+        if scaled < to_bigint(lo) || scaled > to_bigint(hi) {
             return Err(Error::new(format!(
                 "`{s}` encodes to {scaled}, outside the signed {}-bit range [{lo}, {hi}]",
                 self.ring.bits()
             )));
         }
-        let v: i128 = scaled.to_string().parse().expect("in i128 range");
+        let v: I256 = scaled.to_string().parse().expect("in the signed ring range");
         Ok(self.ring.from_signed(v))
     }
 
@@ -76,16 +76,16 @@ impl FixedPoint {
     }
 
     /// Exact decimal value of the ring element `x`.
-    pub fn format(&self, x: u128) -> String {
+    pub fn format(&self, x: U256) -> String {
         format_scaled(self.ring.to_signed(x), self.frac)
     }
 }
 
 /// Exact decimal string for `v / 2^frac`.
-pub fn format_scaled(v: i128, frac: u32) -> String {
+pub fn format_scaled(v: I256, frac: u32) -> String {
     let neg = v < 0;
     // v / 2^f = v * 5^f / 10^f, so the decimal expansion has at most f fractional digits.
-    let digits = (BigInt::from(v.unsigned_abs()) * BigInt::from(5u32).pow(frac)).to_string();
+    let digits = (to_bigint(v).magnitude() * BigInt::from(5u32).pow(frac).magnitude()).to_string();
     let f = frac as usize;
     let padded = format!("{digits:0>width$}", width = f + 1);
     let (int_part, frac_part) = padded.split_at(padded.len() - f);
@@ -96,6 +96,10 @@ pub fn format_scaled(v: i128, frac: u32) -> String {
     } else {
         format!("{sign}{int_part}.{frac_part}")
     }
+}
+
+fn to_bigint(v: I256) -> BigInt {
+    v.to_string().parse().expect("decimal string")
 }
 
 #[cfg(test)]
@@ -123,7 +127,24 @@ mod tests {
     fn wide_rings_are_exact() {
         let f = fp(128, 100);
         let min = f.parse("raw:-170141183460469231731687303715884105728").unwrap();
-        assert_eq!(f.ring().to_signed(min), i128::MIN);
+        assert_eq!(f.ring().to_signed(min), I256::new(i128::MIN));
         assert_eq!(f.format(f.parse("-0.75").unwrap()), "-0.75");
+    }
+
+    #[test]
+    fn ring_256_is_exact() {
+        let f = fp(256, 128);
+        let min = "-57896044618658097711785492504343953926634992332820282019728792003956564819968";
+        let max = "57896044618658097711785492504343953926634992332820282019728792003956564819967";
+        assert_eq!(f.ring().to_signed(f.parse(&format!("raw:{min}")).unwrap()), I256::MIN);
+        assert_eq!(f.ring().to_signed(f.parse(&format!("raw:{max}")).unwrap()), I256::MAX);
+        assert!(f.parse(&format!("raw:{min}0")).is_err());
+        // 2^127 - 2^-128 is the largest value with 128 fractional bits.
+        let top = f.format(f.parse(&format!("raw:{max}")).unwrap());
+        assert!(top.starts_with("170141183460469231731687303715884105727.99999"), "{top}");
+        assert_eq!(f.format(f.parse("-123456789012345678901234567890.0625").unwrap()), "-123456789012345678901234567890.0625");
+        assert!(f.parse("170141183460469231731687303715884105728").is_err());
+        let g = fp(256, 256);
+        assert_eq!(g.format(g.parse("raw:-1").unwrap()), format!("-{}", format_scaled(I256::ONE, 256)));
     }
 }
